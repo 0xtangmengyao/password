@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🔐 密管 · 本地密码管理器</title>
+<style>
+:root{
+  --bg:#0d1117; --card:#161b22; --border:#30363d;
+  --text:#e6edf3; --dim:#8b949e; --accent:#58a6ff; --green:#3fb950; --red:#f85149;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh}
+header{background:linear-gradient(135deg,#1f6feb33,#8957e533);padding:28px 20px;text-align:center;border-bottom:1px solid var(--border)}
+header h1{font-size:28px;margin-bottom:6px}
+header p{color:var(--dim);font-size:14px}
+.wrap{max-width:720px;margin:0 auto;padding:20px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+input,textarea,select{width:100%;background:#0d1117;border:1px solid var(--border);border-radius:8px;color:var(--text);padding:10px 12px;font-size:15px;margin:6px 0}
+input:focus,textarea:focus{outline:none;border-color:var(--accent)}
+button{background:#1f6feb;border:none;color:#fff;padding:10px 18px;border-radius:8px;font-size:15px;cursor:pointer;margin:4px 4px 4px 0}
+button:hover{background:#388bfd}
+button.ghost{background:transparent;border:1px solid var(--border);color:var(--text)}
+button.ghost:hover{border-color:var(--accent)}
+button.danger{background:transparent;border:1px solid var(--red);color:var(--red)}
+button.small{padding:6px 12px;font-size:13px}
+.row{display:flex;gap:8px;align-items:center}
+.row input{flex:1}
+.entry{border:1px solid var(--border);border-radius:10px;padding:14px;margin:10px 0;background:#0d1117}
+.entry h3{font-size:16px;margin-bottom:4px}
+.entry .meta{color:var(--dim);font-size:13px;margin:2px 0}
+.entry .actions{margin-top:8px}
+.hidden{display:none!important}
+#lockScreen{text-align:center;padding:60px 20px}
+#lockScreen .big{font-size:64px;margin-bottom:16px}
+.toolbar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.toolbar input{flex:1;min-width:160px;margin:0}
+.gen-out{font-family:monospace;font-size:18px;background:#0d1117;border:1px dashed var(--accent);border-radius:8px;padding:12px;margin:8px 0;word-break:break-all;user-select:all}
+footer{text-align:center;color:var(--dim);font-size:12px;padding:30px 10px}
+label{font-size:13px;color:var(--dim)}
+.pw-wrap{position:relative}
+.pw-wrap input{padding-right:70px}
+.pw-wrap .toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--accent);font-size:13px;padding:4px 8px;margin:0;cursor:pointer}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1f6feb;color:#fff;padding:10px 20px;border-radius:8px;font-size:14px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:99}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔐 密管</h1>
+  <p>纯本地 · 零服务器 · AES-256-GCM 加密 — 你的密码只属于你</p>
+</header>
+
+<div class="wrap">
+
+  <!-- 锁定屏 -->
+  <div id="lockScreen">
+    <div class="big">🔒</div>
+    <div class="card" style="max-width:380px;margin:0 auto">
+      <h3 style="margin-bottom:12px" id="lockTitle">输入主密码解锁</h3>
+      <div class="pw-wrap">
+        <input type="password" id="masterPw" placeholder="主密码" autocomplete="current-password">
+        <button class="toggle" onclick="togglePw('masterPw',this)">显示</button>
+      </div>
+      <button onclick="unlock()" style="width:100%;margin-top:8px">解锁</button>
+      <p style="color:var(--dim);font-size:12px;margin-top:12px" id="lockHint">首次使用？输入一个主密码即创建保险库</p>
+    </div>
+  </div>
+
+  <!-- 主界面 -->
+  <div id="main" class="hidden">
+    <div class="toolbar">
+      <input id="search" placeholder="🔍 搜索标题 / 用户名 / 网址" oninput="render()">
+      <button class="small ghost" onclick="lock()">🔒 锁定</button>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom:10px">➕ 添加 / 编辑</h3>
+      <input id="f_title" placeholder="标题，如 GitHub">
+      <input id="f_user" placeholder="用户名 / 邮箱">
+      <div class="pw-wrap">
+        <input id="f_pass" placeholder="密码">
+        <button class="toggle" onclick="togglePw('f_pass',this)">显示</button>
+      </div>
+      <input id="f_url" placeholder="网址（可选）">
+      <textarea id="f_note" placeholder="备注（可选）" rows="2"></textarea>
+      <div>
+        <button onclick="saveEntry()">保存</button>
+        <button class="ghost" onclick="fillGen()">🎲 生成随机密码</button>
+        <button class="ghost hidden" id="cancelEdit" onclick="resetForm()">取消编辑</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom:10px">🎲 密码生成器</h3>
+      <div class="row">
+        <label>长度 <input id="g_len" type="number" value="16" min="8" max="64" style="width:70px"></label>
+        <label><input type="checkbox" id="g_sym" checked style="width:auto"> 符号</label>
+        <label><input type="checkbox" id="g_num" checked style="width:auto"> 数字</label>
+      </div>
+      <div class="gen-out" id="genOut">点击生成</div>
+      <button class="small" onclick="genPw()">重新生成</button>
+      <button class="small ghost" onclick="copyText(document.getElementById('genOut').textContent)">复制</button>
+    </div>
+
+    <h3 style="margin:16px 0 8px">📦 我的密码 <span id="count" style="color:var(--dim);font-size:13px"></span></h3>
+    <div id="list"></div>
+
+    <div class="card">
+      <h3 style="margin-bottom:10px">💾 备份</h3>
+      <button class="small ghost" onclick="exportVault()">导出加密备份</button>
+      <button class="small ghost" onclick="document.getElementById('importFile').click()">导入备份</button>
+      <input type="file" id="importFile" accept=".json" class="hidden" onchange="importVault(this)">
+      <p style="color:var(--dim);font-size:12px;margin-top:8px">备份文件仍由主密码加密，可跨设备迁移</p>
+    </div>
+  </div>
+</div>
+
+<footer>🔐 密管 · 数据永不离开你的浏览器 · 开源免费</footer>
+<div class="toast" id="toast"></div>
+
+<script>
+// ---------- 加密层：PBKDF2 + AES-GCM ----------
+const enc = new TextEncoder(), dec = new TextDecoder();
+let vaultKey = null, entries = [], editingId = null, lockTimer = null;
+
+async function deriveKey(password, salt){
+  const base = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    {name:"PBKDF2", salt, iterations:120000, hash:"SHA-256"},
+    base, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]);
+}
+async function encryptData(key, obj){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, enc.encode(JSON.stringify(obj)));
+  return {iv:[...iv], data:[...new Uint8Array(ct)]};
+}
+async function decryptData(key, payload){
+  const pt = await crypto.subtle.decrypt(
+    {name:"AES-GCM", iv:new Uint8Array(payload.iv)},
+    key, new Uint8Array(payload.data));
+  return JSON.parse(dec.decode(pt));
+}
+const b64 = {
+  en: a => btoa(String.fromCharCode(...a)),
+  de: s => Uint8Array.from(atob(s), c => c.charCodeAt(0))
+};
+
+// ---------- 保险库 ----------
+function loadStored(){
+  const raw = localStorage.getItem("miguan_vault");
+  return raw ? JSON.parse(raw) : null;
+}
+async function unlock(){
+  const pw = document.getElementById("masterPw").value;
+  if(!pw){ toast("请输入主密码"); return; }
+  const stored = loadStored();
+  try{
+    if(stored){
+      const salt = b64.de(stored.salt);
+      vaultKey = await deriveKey(pw, salt);
+      entries = await decryptData(vaultKey, {iv:b64.de(stored.iv), data:b64.de(stored.data)});
+      toast("解锁成功 🎉");
+    }else{
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      vaultKey = await deriveKey(pw, salt);
+      entries = [];
+      await persist(salt);
+      toast("保险库已创建 🎉");
+    }
+    document.getElementById("lockScreen").classList.add("hidden");
+    document.getElementById("main").classList.remove("hidden");
+    document.getElementById("masterPw").value = "";
+    render(); armLockTimer();
+  }catch(e){ toast("❌ 主密码错误"); }
+}
+async function persist(salt){
+  salt = salt || b64.de(loadStored().salt);
+  const payload = await encryptData(vaultKey, entries);
+  localStorage.setItem("miguan_vault", JSON.stringify({
+    salt: b64.en(salt), iv: b64.en(payload.iv), data: b64.en(payload.data)
+  }));
+}
+function lock(){
+  vaultKey = null; entries = []; editingId = null;
+  clearTimeout(lockTimer);
+  document.getElementById("main").classList.add("hidden");
+  document.getElementById("lockScreen").classList.remove("hidden");
+  document.getElementById("lockTitle").textContent = "输入主密码解锁";
+}
+function armLockTimer(){
+  clearTimeout(lockTimer);
+  lockTimer = setTimeout(()=>{ lock(); toast("已自动锁定 🔒"); }, 5*60*1000);
+}
+["click","keydown"].forEach(ev=>document.addEventListener(ev,()=>{ if(vaultKey) armLockTimer(); },{passive:true}));
+
+// ---------- 条目 CRUD ----------
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+async function saveEntry(){
+  const t = document.getElementById("f_title").value.trim();
+  const p = document.getElementById("f_pass").value;
+  if(!t){ toast("标题不能为空"); return; }
+  if(!p){ toast("密码不能为空"); return; }
+  const obj = {id: editingId || uid(), title:t,
+    user: document.getElementById("f_user").value.trim(), pass:p,
+    url: document.getElementById("f_url").value.trim(),
+    note: document.getElementById("f_note").value.trim(), updated:Date.now()};
+  if(editingId){ entries = entries.map(e=>e.id===editingId?obj:e); }
+  else{ entries.unshift(obj); }
+  await persist(); resetForm(); render();
+  toast(editingId?"已更新 ✅":"已保存 ✅");
+}
+function editEntry(id){
+  const e = entries.find(x=>x.id===id); if(!e) return;
+  editingId = id;
+  document.getElementById("f_title").value = e.title;
+  document.getElementById("f_user").value = e.user;
+  document.getElementById("f_pass").value = e.pass;
+  document.getElementById("f_url").value = e.url;
+  document.getElementById("f_note").value = e.note;
+  document.getElementById("cancelEdit").classList.remove("hidden");
+  window.scrollTo({top:0, behavior:"smooth"});
+}
+function resetForm(){
+  editingId = null;
+  ["f_title","f_user","f_pass","f_url","f_note"].forEach(id=>document.getElementById(id).value="");
+  document.getElementById("cancelEdit").classList.add("hidden");
+}
+async function delEntry(id){
+  const e = entries.find(x=>x.id===id);
+  if(!confirm(`删除「${e.title}」？`)) return;
+  entries = entries.filter(x=>x.id!==id);
+  await persist(); render(); toast("已删除 🗑️");
+}
+function render(){
+  const q = document.getElementById("search").value.toLowerCase();
+  const list = document.getElementById("list");
+  const shown = entries.filter(e=>(e.title+e.user+e.url).toLowerCase().includes(q));
+  document.getElementById("count").textContent = `(${shown.length}/${entries.length})`;
+  list.innerHTML = shown.length ? "" : `<p style="color:var(--dim);text-align:center;padding:20px">${entries.length?"没有匹配结果":"还没有密码，点击上方添加第一条吧 👆"}</p>`;
+  shown.forEach(e=>{
+    const d = document.createElement("div");
+    d.className = "entry";
+    d.innerHTML = `<h3>${esc(e.title)}</h3>
+      ${e.user?`<div class="meta">👤 ${esc(e.user)} <button class="small ghost" onclick="copyText('${esc(e.user)}')">复制</button></div>`:""}
+      <div class="meta">🔑 <span id="pw_${e.id}">••••••••</span>
+        <button class="small ghost" onclick="toggleEntryPw('${e.id}')">显示</button>
+        <button class="small ghost" onclick="copyText(document.getElementById('pw_${e.id}').dataset.real)">复制</button></div>
+      ${e.url?`<div class="meta">🔗 <a href="${esc(e.url)}" target="_blank" style="color:var(--accent)">${esc(e.url)}</a></div>`:""}
+      ${e.note?`<div class="meta">📝 ${esc(e.note)}</div>`:""}
+      <div class="actions">
+        <button class="small ghost" onclick="editEntry('${e.id}')">编辑</button>
+        <button class="small danger" onclick="delEntry('${e.id}')">删除</button>
+      </div>`;
+    d.querySelector(`#pw_${e.id}`).dataset.real = e.pass;
+    list.appendChild(d);
+  });
+}
+function toggleEntryPw(id){
+  const el = document.getElementById("pw_"+id);
+  el.textContent = el.textContent==="••••••••" ? el.dataset.real : "••••••••";
+}
+function esc(s){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+// ---------- 生成器 / 复制 / 备份 ----------
+function genPw(){
+  const len = Math.max(8, Math.min(64, +document.getElementById("g_len").value||16));
+  let cs = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  if(document.getElementById("g_num").checked) cs += "0123456789";
+  if(document.getElementById("g_sym").checked) cs += "!@#$%^&*()-_=+[]{};:,.<>?";
+  const buf = crypto.getRandomValues(new Uint8Array(len));
+  const pw = [...buf].map(b=>cs[b%cs.length]).join("");
+  document.getElementById("genOut").textContent = pw;
+  return pw;
+}
+function fillGen(){ document.getElementById("f_pass").value = genPw(); toast("已填入 🎲"); }
+function copyText(t){
+  navigator.clipboard.writeText(t).then(()=>toast("已复制 📋"),()=>toast("复制失败"));
+}
+function togglePw(id, btn){
+  const el = document.getElementById(id);
+  const show = el.type==="password";
+  el.type = show?"text":"password"; btn.textContent = show?"隐藏":"显示";
+}
+function exportVault(){
+  const blob = new Blob([localStorage.getItem("miguan_vault")], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "miguan-backup-"+new Date().toISOString().slice(0,10)+".json";
+  a.click(); toast("备份已导出 💾");
+}
+function importVault(input){
+  const f = input.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = async ()=>{
+    try{
+      const data = JSON.parse(r.result);
+      if(!data.salt||!data.iv||!data.data) throw 0;
+      localStorage.setItem("miguan_vault", r.result);
+      toast("导入成功，请重新解锁 🔓"); lock();
+    }catch(e){ toast("❌ 备份文件无效"); }
+  };
+  r.readAsText(f); input.value = "";
+}
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove("show"), 2200);
+}
+document.getElementById("masterPw").addEventListener("keydown", e=>{ if(e.key==="Enter") unlock(); });
+if(loadStored()) document.getElementById("lockHint").textContent = "检测到已有保险库，输入主密码解锁";
+</script>
+</body>
+</html>
